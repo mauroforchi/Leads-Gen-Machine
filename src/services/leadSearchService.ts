@@ -31,7 +31,7 @@ export async function searchRealLeads(criteria: SearchCriteria): Promise<Lead[]>
 
   const query = `
     Realiza una búsqueda exhaustiva en tiempo real para encontrar leads B2B REALES.
-    Objetivo: Encontrar al menos 20 leads reales ${companyFilter} ${locationFilter}.
+    Objetivo: Encontrar el máximo número posible de leads reales (hasta 100 si es posible) ${companyFilter} ${locationFilter}.
     Filtros: ${sizeFilter} ${revenueFilter} ${fundingFilter} ${seniorityFilter} ${yearsInRoleFilter} ${growthRateFilter}.
     Perfil buscado: Personas reales ${positionFilter}.
     ${promptContext}
@@ -51,7 +51,8 @@ export async function searchRealLeads(criteria: SearchCriteria): Promise<Lead[]>
       model: "gemini-3.1-pro-preview",
       contents: query,
       config: {
- responseMimeType: "application/json",
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
           items: {

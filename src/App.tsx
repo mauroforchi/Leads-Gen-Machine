@@ -32,7 +32,8 @@ import {
   Check,
   ChevronDown,
   X,
-  Globe
+  Globe,
+  Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -65,6 +66,7 @@ import {
 import { generateMockLeads } from './utils';
 import { generateSalesScript } from './services/geminiService';
 import { searchRealLeads } from './services/leadSearchService';
+import { verifyEmail } from './services/emailVerificationService';
 import { useTranslation } from './i18n';
 
 function MultiSelect({ 
@@ -173,6 +175,7 @@ export default function App() {
   });
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isVerifying, setIsVerifying] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [salesScript, setSalesScript] = useState<{ step1: string, step2: string, step3: string } | null>(null);
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
@@ -263,6 +266,29 @@ export default function App() {
       console.error("Error generating script:", error);
     } finally {
       setIsGeneratingScript(false);
+    }
+  };
+
+  const handleVerifyEmail = async (lead: Lead) => {
+    setIsVerifying(lead.id);
+    try {
+      const result = await verifyEmail(lead.email, lead.companyName);
+      setLeads(prev => prev.map(l => 
+        l.id === lead.id ? { ...l, verificationScore: result.score } : l
+      ));
+      if (selectedLead?.id === lead.id) {
+        setSelectedLead(prev => prev ? { ...prev, verificationScore: result.score } : null);
+      }
+    } catch (error) {
+      console.error("Error verifying email:", error);
+    } finally {
+      setIsVerifying(null);
+    }
+  };
+
+  const verifyAllLeads = async () => {
+    for (const lead of leads) {
+      await handleVerifyEmail(lead);
     }
   };
 
@@ -414,13 +440,22 @@ export default function App() {
               </select>
             </div>
             {leads.length > 0 && (
-              <button 
-                onClick={exportToCSV}
-                className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
-              >
-                <Download size={16} />
-                {t('action')}
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={verifyAllLeads}
+                  className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                >
+                  <Shield size={16} className="text-emerald-500" />
+                  Verificar Todos
+                </button>
+                <button 
+                  onClick={exportToCSV}
+                  className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+                >
+                  <Download size={16} />
+                  {t('action')}
+                </button>
+              </div>
             )}
             <div className="w-8 h-8 rounded-full bg-gray-200 border border-gray-300 flex items-center justify-center text-xs font-bold">
               MF
@@ -704,7 +739,19 @@ export default function App() {
                             </td>
                             <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
                               <div className="flex flex-col">
-                                <a href={`mailto:${lead.email}`} className="text-[11px] text-gray-600 hover:text-blue-600 transition-colors truncate max-w-[180px]">{lead.email}</a>
+                                <div className="flex items-center gap-2 group/email">
+                                  <a href={`mailto:${lead.email}`} className="text-[11px] text-gray-600 hover:text-blue-600 transition-colors truncate max-w-[150px]">{lead.email}</a>
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText(lead.email);
+                                    }}
+                                    className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600 transition-colors opacity-0 group-hover/email:opacity-100"
+                                    title="Copiar email"
+                                  >
+                                    <Copy size={10} />
+                                  </button>
+                                </div>
                                 {lead.linkedinUrl && (
                                   <a 
                                     href={lead.linkedinUrl} 
@@ -744,13 +791,28 @@ export default function App() {
                                 <div className="w-12 h-1 bg-gray-100 rounded-full overflow-hidden mt-1">
                                   <div 
                                     className={cn(
-                                      "h-full rounded-full",
+                                      "h-full rounded-full transition-all duration-500",
                                       lead.verificationScore > 90 ? "bg-emerald-500" : 
                                       lead.verificationScore > 80 ? "bg-blue-500" : "bg-amber-500"
                                     )}
                                     style={{ width: `${lead.verificationScore}%` }}
                                   />
                                 </div>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleVerifyEmail(lead);
+                                  }}
+                                  disabled={isVerifying === lead.id}
+                                  className="mt-1 text-[8px] font-bold text-gray-400 hover:text-emerald-600 uppercase tracking-tighter flex items-center gap-1"
+                                >
+                                  {isVerifying === lead.id ? (
+                                    <Loader2 size={8} className="animate-spin" />
+                                  ) : (
+                                    <RefreshCw size={8} />
+                                  )}
+                                  {isVerifying === lead.id ? 'Verificando...' : 'Re-verificar'}
+                                </button>
                               </div>
                             </td>
                             <td className="px-4 py-2 text-right">
