@@ -51,8 +51,7 @@ export async function searchRealLeads(criteria: SearchCriteria): Promise<Lead[]>
       model: "gemini-3.1-pro-preview",
       contents: query,
       config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
+ responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
           items: {
