@@ -20,6 +20,7 @@ export interface Lead {
   potentialProblem: string;
   email: string;
   verificationScore: number;
+  verificationDetails?: string[];
   domain?: string;
   linkedinUrl?: string;
   triggerEvent?: string;
@@ -37,6 +38,15 @@ export interface Lead {
   };
   potentialProjects?: AIProject[];
   status?: 'new' | 'contacted';
+  discProfile?: {
+    type: 'D' | 'I' | 'S' | 'C';
+    label: string;
+    description: string;
+    tips: string[];
+  };
+  icebreaker?: string;
+  isEnriched?: boolean;
+  phone?: string;
 }
 
 export interface AIProject {

@@ -67,6 +67,7 @@ import { generateMockLeads } from './utils';
 import { generateSalesScript } from './services/geminiService';
 import { searchRealLeads } from './services/leadSearchService';
 import { verifyEmail } from './services/emailVerificationService';
+import { enrichLead } from './services/enrichmentService';
 import { useTranslation } from './i18n';
 
 function MultiSelect({ 
@@ -176,8 +177,20 @@ export default function App() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isVerifying, setIsVerifying] = useState<string | null>(null);
+  const [isEnriching, setIsEnriching] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [salesScript, setSalesScript] = useState<{ step1: string, step2: string, step3: string } | null>(null);
+  const [salesScript, setSalesScript] = useState<{ 
+    step1: string, 
+    step2: string, 
+    step3: string,
+    icebreaker: string,
+    discProfile: {
+      type: 'D' | 'I' | 'S' | 'C',
+      label: string,
+      description: string,
+      tips: string[]
+    }
+  } | null>(null);
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
   const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
   const [language, setLanguage] = useState<Language>('es');
@@ -192,7 +205,7 @@ export default function App() {
   };
   
   // Script cache to avoid redundant API calls
-  const [scriptCache, setScriptCache] = useState<Record<string, { step1: string, step2: string, step3: string }>>({});
+  const [scriptCache, setScriptCache] = useState<Record<string, any>>({});
   
   const [sessions, setSessions] = useState<SearchSession[]>(() => {
     const saved = localStorage.getItem('leads_gen_pro_sessions');
@@ -207,14 +220,25 @@ export default function App() {
     setIsGenerating(true);
     try {
       const realLeads = await searchRealLeads(criteria);
-      setLeads(realLeads);
+      
+      // Automatic robust verification
+      const verifiedLeads = await Promise.all(realLeads.map(async (lead) => {
+        const verification = await verifyEmail(lead.email, lead.companyName);
+        return {
+          ...lead,
+          verificationScore: verification.score,
+          verificationDetails: verification.details
+        };
+      }));
+
+      setLeads(verifiedLeads);
       
       // Save to history
       const newSession: SearchSession = {
         id: Math.random().toString(36).substr(2, 9),
         timestamp: Date.now(),
         criteria: { ...criteria },
-        leads: realLeads,
+        leads: verifiedLeads,
         name: criteria.prompt ? `Prompt: ${criteria.prompt.substring(0, 20)}...` : (criteria.company ? `Búsqueda: ${criteria.company}` : `Búsqueda: ${criteria.industry[0] || 'General'}`)
       };
       setSessions(prev => [newSession, ...prev]);
@@ -223,13 +247,24 @@ export default function App() {
     } catch (error: any) {
       console.error("Error fetching real leads:", error);
       const newLeads = generateMockLeads(criteria);
-      setLeads(newLeads);
+      
+      // Verify mock leads too for consistency
+      const verifiedMockLeads = await Promise.all(newLeads.map(async (lead) => {
+        const verification = await verifyEmail(lead.email, lead.companyName);
+        return {
+          ...lead,
+          verificationScore: verification.score,
+          verificationDetails: verification.details
+        };
+      }));
+
+      setLeads(verifiedMockLeads);
       
       const newSession: SearchSession = {
         id: Math.random().toString(36).substr(2, 9),
         timestamp: Date.now(),
         criteria: { ...criteria },
-        leads: newLeads,
+        leads: verifiedMockLeads,
         name: `(Demo) ${criteria.company || criteria.industry[0] || 'General'}`
       };
       setSessions(prev => [newSession, ...prev]);
@@ -274,10 +309,10 @@ export default function App() {
     try {
       const result = await verifyEmail(lead.email, lead.companyName);
       setLeads(prev => prev.map(l => 
-        l.id === lead.id ? { ...l, verificationScore: result.score } : l
+        l.id === lead.id ? { ...l, verificationScore: result.score, verificationDetails: result.details } : l
       ));
       if (selectedLead?.id === lead.id) {
-        setSelectedLead(prev => prev ? { ...prev, verificationScore: result.score } : null);
+        setSelectedLead(prev => prev ? { ...prev, verificationScore: result.score, verificationDetails: result.details } : null);
       }
     } catch (error) {
       console.error("Error verifying email:", error);
@@ -289,6 +324,23 @@ export default function App() {
   const verifyAllLeads = async () => {
     for (const lead of leads) {
       await handleVerifyEmail(lead);
+    }
+  };
+
+  const handleEnrichLead = async (lead: Lead) => {
+    setIsEnriching(lead.id);
+    try {
+      const enrichment = await enrichLead(lead);
+      setLeads(prev => prev.map(l => 
+        l.id === lead.id ? { ...l, ...enrichment } : l
+      ));
+      if (selectedLead?.id === lead.id) {
+        setSelectedLead(prev => prev ? { ...prev, ...enrichment } : null);
+      }
+    } catch (error) {
+      console.error("Error enriching lead:", error);
+    } finally {
+      setIsEnriching(null);
     }
   };
 
@@ -752,6 +804,11 @@ export default function App() {
                                     <Copy size={10} />
                                   </button>
                                 </div>
+                                {lead.phone && (
+                                  <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
+                                    <Check size={10} /> {lead.phone}
+                                  </p>
+                                )}
                                 {lead.linkedinUrl && (
                                   <a 
                                     href={lead.linkedinUrl} 
@@ -779,7 +836,7 @@ export default function App() {
                               </button>
                             </td>
                             <td className="px-4 py-2">
-                              <div className="flex flex-col items-center">
+                              <div className="flex flex-col items-center group/verify">
                                 <div className="flex items-center gap-1">
                                   <div className={cn(
                                     "w-1.5 h-1.5 rounded-full",
@@ -788,7 +845,10 @@ export default function App() {
                                   )} />
                                   <span className="text-[11px] font-bold">{lead.purchaseProbability}%</span>
                                 </div>
-                                <div className="w-12 h-1 bg-gray-100 rounded-full overflow-hidden mt-1">
+                                <div 
+                                  className="w-12 h-1 bg-gray-100 rounded-full overflow-hidden mt-1 relative"
+                                  title={lead.verificationDetails?.join('\n')}
+                                >
                                   <div 
                                     className={cn(
                                       "h-full rounded-full transition-all duration-500",
@@ -798,6 +858,18 @@ export default function App() {
                                     style={{ width: `${lead.verificationScore}%` }}
                                   />
                                 </div>
+                                {lead.verificationDetails && (
+                                  <div className="absolute z-50 hidden group-hover/verify:block bg-gray-900 text-white text-[10px] p-2 rounded shadow-xl mt-8 w-48 pointer-events-none">
+                                    <p className="font-bold mb-1 border-b border-white/20 pb-1">Detalles de Verificación:</p>
+                                    <ul className="space-y-0.5">
+                                      {lead.verificationDetails.map((d, i) => (
+                                        <li key={i} className="flex items-center gap-1">
+                                          <Check size={8} className="text-emerald-400" /> {d}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
                                 <button 
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -816,16 +888,40 @@ export default function App() {
                               </div>
                             </td>
                             <td className="px-4 py-2 text-right">
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleGenerateScript(lead);
-                                }}
-                                className="inline-flex items-center gap-1.5 px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold hover:bg-blue-600 hover:text-white transition-all"
-                              >
-                                <Sparkles size={12} />
-                                Script
-                              </button>
+                              <div className="flex items-center justify-end gap-2">
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEnrichLead(lead);
+                                  }}
+                                  disabled={isEnriching === lead.id || lead.isEnriched}
+                                  className={cn(
+                                    "inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold transition-all",
+                                    lead.isEnriched 
+                                      ? "bg-emerald-50 text-emerald-600 border border-emerald-100" 
+                                      : "bg-gray-100 text-gray-600 hover:bg-emerald-50 hover:text-emerald-600"
+                                  )}
+                                >
+                                  {isEnriching === lead.id ? (
+                                    <Loader2 size={12} className="animate-spin" />
+                                  ) : lead.isEnriched ? (
+                                    <CheckCircle2 size={12} />
+                                  ) : (
+                                    <Rocket size={12} />
+                                  )}
+                                  {lead.isEnriched ? 'Enriquecido' : 'Enriquecer'}
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleGenerateScript(lead);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold hover:bg-blue-600 hover:text-white transition-all"
+                                >
+                                  <Sparkles size={12} />
+                                  Script
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -1118,6 +1214,30 @@ export default function App() {
                           {t('decisionThermometer')}
                         </h3>
                         
+                        {salesScript?.discProfile && (
+                          <div className={cn(
+                            "mb-6 p-4 rounded-xl border",
+                            salesScript.discProfile.type === 'D' ? "bg-red-50 border-red-100 text-red-900" :
+                            salesScript.discProfile.type === 'I' ? "bg-amber-50 border-amber-100 text-amber-900" :
+                            salesScript.discProfile.type === 'S' ? "bg-emerald-50 border-emerald-100 text-emerald-900" :
+                            "bg-blue-50 border-blue-100 text-blue-900"
+                          )}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black uppercase tracking-wider opacity-60">Perfil DISC</span>
+                              <span className="text-lg font-black">{salesScript.discProfile.type}</span>
+                            </div>
+                            <p className="text-xs font-bold mb-1">{salesScript.discProfile.label}</p>
+                            <p className="text-[10px] leading-tight opacity-80 mb-3">{salesScript.discProfile.description}</p>
+                            <div className="space-y-1">
+                              {salesScript.discProfile.tips.map((tip, i) => (
+                                <p key={i} className="text-[9px] flex items-center gap-1 font-medium">
+                                  <Check size={8} /> {tip}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
                         <div className="relative h-4 bg-gray-100 rounded-full mb-6 overflow-hidden">
                           <div 
                             className={cn(
@@ -1266,6 +1386,22 @@ export default function App() {
                                 </div>
                               ) : (
                                 <>
+                                  {salesScript.icebreaker && (
+                                    <div className="mb-6 p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
+                                      <p className="text-[10px] font-black text-indigo-600 uppercase mb-2 flex items-center gap-1">
+                                        <Sparkles size={12} /> Icebreaker Sugerido
+                                      </p>
+                                      <p className="text-sm font-medium text-indigo-900 italic">"{salesScript.icebreaker}"</p>
+                                      <button 
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(salesScript.icebreaker);
+                                        }}
+                                        className="mt-2 text-[10px] font-bold text-indigo-400 hover:text-indigo-600 transition-colors flex items-center gap-1"
+                                      >
+                                        <Copy size={10} /> Copiar Gancho
+                                      </button>
+                                    </div>
+                                  )}
                                   <div className="absolute top-2 right-2 flex gap-2">
                                     <button 
                                       onClick={() => {
